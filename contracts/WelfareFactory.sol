@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import "./WelfareSignup.sol";
-import "./ShearesToken.sol";
+import "./Token.sol";
 
 /**
  * @title WelfareFactory
@@ -10,7 +10,7 @@ import "./ShearesToken.sol";
  */
 contract WelfareFactory {
     address public immutable treasury;
-    ShearesToken public immutable token; // Use ShearesToken
+    Token public immutable token; // Use Token
 
     address[] public activeWelfares;
     address[] public inactiveWelfares;
@@ -20,13 +20,13 @@ contract WelfareFactory {
     event WelfareArchived(address indexed welfareAddress);
 
     /**
-     * @dev Initializes the factory with a ShearesToken contract address.
-     * @param _tokenAddress Address of the ShearesToken contract.
+     * @dev Initializes the factory with a Token contract address.
+     * @param _tokenAddress Address of the Token contract.
      */
     constructor(address _tokenAddress) {
         require(_tokenAddress != address(0), "Invalid token address");
 
-        token = ShearesToken(_tokenAddress);
+        token = Token(_tokenAddress);
         treasury = token.treasury();
     }
 

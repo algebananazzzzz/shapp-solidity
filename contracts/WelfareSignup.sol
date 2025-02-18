@@ -2,10 +2,10 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./ShearesToken.sol"; // Import ShearesToken
+import "./Token.sol"; // Import ShearesToken
 
 contract WelfareSignup is Ownable {
-    ShearesToken public token;
+    Token public immutable token;
 
     struct Welfare {
         string name;
@@ -20,8 +20,8 @@ contract WelfareSignup is Ownable {
     }
 
     Welfare public welfareDetails;
-    mapping(address => bool) public attendees;
-    mapping(address => bool) public redeemed;
+    mapping(address => bool) private attendees;
+    mapping(address => bool) private redeemed;
 
     event SignedUp(address indexed attendee);
     event WelfareCreated(
@@ -67,7 +67,7 @@ contract WelfareSignup is Ownable {
             isActive: true
         });
 
-        token = ShearesToken(_tokenAddress);
+        token = Token(_tokenAddress);
 
         emit WelfareCreated(
             _name,
@@ -85,6 +85,14 @@ contract WelfareSignup is Ownable {
      */
     function isAttendee() external view returns (bool) {
         return attendees[msg.sender];
+    }
+
+    /**
+     * @dev Checks if a user has already redeemed the welfare.
+     * @return bool True if the user has redeemed, otherwise false.
+     */
+    function hasRedeemed() external view returns (bool) {
+        return redeemed[msg.sender];
     }
 
     function signUp() external {

@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import TokenABI from "../artifacts/contracts/ShearesToken.sol/ShearesToken.json";
+import TokenABI from "../artifacts/contracts/Token.sol/Token.json";
 import EventFactoryABI from "../artifacts/contracts/EventFactory.sol/EventFactory.json";
 import WelfareFactoryABI from "../artifacts/contracts/WelfareFactory.sol/WelfareFactory.json";
 

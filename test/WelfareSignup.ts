@@ -22,9 +22,9 @@ describe("WelfareSignup Contract", function () {
         // Get the signers (accounts)
         [owner, addr1, addr2, addr3, addr4] = await ethers.getSigners();
 
-        // Deploy ShearesToken
-        const Token = await ethers.getContractFactory("ShearesToken");
-        const token = await Token.deploy("ShearesToken", "SHR", 1000000);
+        // Deploy Token
+        const Token = await ethers.getContractFactory("Token");
+        const token = await Token.deploy("HallToken", "SEX", 1000);
 
         // Deploy the WelfareSignup contract
         const WelfareSignup = await ethers.getContractFactory("WelfareSignup");
@@ -75,7 +75,7 @@ describe("WelfareSignup Contract", function () {
 
         const welfareDetails = await welfareSignup.welfareDetails();
         expect(welfareDetails.attendeeCount).to.equal(1);
-        expect(await welfareSignup.attendees(addr1.address)).to.equal(true);
+        expect(await welfareSignup.connect(addr1).isAttendee()).to.equal(true);
 
 
         // Check balance after check-in
@@ -151,7 +151,7 @@ describe("WelfareSignup Contract", function () {
         await welfareSignup.connect(addr1).signUp();
 
         await welfareSignup.connect(addr1).redeem();
-        expect(await welfareSignup.redeemed(addr1.address)).to.equal(true);
+        expect(await welfareSignup.connect(addr1).hasRedeemed()).to.equal(true);
     });
 
     it("should not allow redemption after redemption period", async function () {

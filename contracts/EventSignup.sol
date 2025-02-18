@@ -2,39 +2,40 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./ShearesToken.sol"; // Import the ShearesToken contract
+import "./Token.sol"; // Import the Token contract
 
 /**
  * @title EventSignup
- * @dev This contract allows users to sign up for events and get rewarded with ShearesToken upon check-in.
+ * @dev This contract allows users to sign up for events and get rewarded with Token upon check-in.
  */
 contract EventSignup is Ownable {
-    ShearesToken public immutable token; // Immutable reference to the ERC20 token contract
+    Token public immutable token; // Immutable reference to the ERC20 token contract
 
     struct Event {
         string name;
         string description;
-        uint16 maxCapacity; // Max number of attendees
+        uint16 maxCapacity; // Immutable to save gas
+        uint256 signupStartTime;
+        uint256 signupEndTime;
+        uint256 eventStartTime;
+        uint256 eventEndTime;
+        uint8 rewardCost; // Stored in the same slot as attendeeCount
         uint16 attendeeCount; // Current number of signed-up attendees
-        uint256 signupStartTime; // When signups begin
-        uint256 signupEndTime; // When signups end
-        uint256 eventStartTime; // When the event begins
-        uint256 eventEndTime; // When the event ends
-        uint8 rewardCost; // Tokens rewarded for check-in
-        bool isActive; // Whether the event is active
+        bool isActive;
     }
 
     struct AttendeeDetails {
         bool checkedIn; // Whether the user has checked in
-        string metadata; // Additional metadata (e.g., attendee details)
+        string metadata; // Attendee metadata in string format
     }
 
     Event public eventDetails; // Store event details
     mapping(address => AttendeeDetails) private attendees; // Store attendees' information
-    address[] private attendeeList; // List of attendee addresses (for metadata retrieval)
+    address[] private attendeeList; // List of attendee addresses
 
     // Events for logging
     event SignedUp(address indexed attendee, string metadata);
+    event CheckedIn(string metadata);
     event EventCreated(string name, uint16 maxCapacity);
     event Deactivated(address indexed creator);
 
@@ -48,7 +49,7 @@ contract EventSignup is Ownable {
      * @param _eventStartTime Timestamp when event starts
      * @param _eventEndTime Timestamp when event ends
      * @param _rewardCost Number of tokens rewarded on check-in
-     * @param _tokenAddress Address of the ShearesToken contract
+     * @param _tokenAddress Address of the Token contract
      */
     constructor(
         string memory _name,
@@ -62,7 +63,10 @@ contract EventSignup is Ownable {
         address _tokenAddress
     ) {
         require(_maxCapacity > 0, "Capacity must be greater than 0");
-        require(_signupStartTime < _signupEndTime, "Invalid signup time");
+        require(
+            _signupStartTime < _signupEndTime,
+            "Signup start time must be before signup end time"
+        );
         require(
             _signupEndTime < _eventStartTime,
             "Signup must end before event starts"
@@ -85,7 +89,7 @@ contract EventSignup is Ownable {
             isActive: true
         });
 
-        token = ShearesToken(_tokenAddress);
+        token = Token(_tokenAddress);
 
         emit EventCreated(_name, _maxCapacity);
     }
@@ -99,8 +103,24 @@ contract EventSignup is Ownable {
     }
 
     /**
+     * @dev Checks if a user has checked in.
+     * @return bool True if the user has checked in, otherwise false.
+     */
+    function checkedIn() external view returns (bool) {
+        return attendees[msg.sender].checkedIn;
+    }
+
+    /**
+     * @dev Checks if a user has redeemed their reward.
+     * @return bool True if the user has redeemed, otherwise false.
+     */
+    function hasRedeemed() external view returns (bool) {
+        return attendees[msg.sender].checkedIn;
+    }
+
+    /**
      * @dev Allows a user to sign up for the event.
-     * @param metadata Additional attendee details (e.g., name, email)
+     * @param metadata Additional attendee details (e.g., name, email, as a string)
      */
     function signUp(string calldata metadata) external {
         require(eventDetails.isActive, "Event is not active");
@@ -122,7 +142,7 @@ contract EventSignup is Ownable {
         attendeeList.push(msg.sender);
 
         unchecked {
-            eventDetails.attendeeCount++; // Gas-efficient increment
+            eventDetails.attendeeCount += 1; // Gas-efficient increment
         }
 
         emit SignedUp(msg.sender, metadata);
@@ -130,30 +150,29 @@ contract EventSignup is Ownable {
 
     /**
      * @dev Allows an attendee to check in and receive rewards.
-     * @return metadata The metadata string of the attendee.
      */
-    function checkIn() external returns (string memory metadata) {
-        require(eventDetails.isActive, "Event is not active");
+    function checkIn() external {
+        Event memory eventInfo = eventDetails; // Cache event details to reduce storage access
+        require(eventInfo.isActive, "Event is not active");
         require(
-            block.timestamp >= eventDetails.eventStartTime,
+            block.timestamp >= eventInfo.eventStartTime,
             "Event not started"
         );
-        require(block.timestamp < eventDetails.eventEndTime, "Event ended");
-        require(
-            bytes(attendees[msg.sender].metadata).length > 0,
-            "Not signed up"
-        );
-        require(!attendees[msg.sender].checkedIn, "Already checked in");
+        require(block.timestamp < eventInfo.eventEndTime, "Event ended");
 
-        attendees[msg.sender].checkedIn = true;
+        AttendeeDetails storage attendee = attendees[msg.sender]; // Cache attendee details
+        require(bytes(attendee.metadata).length > 0, "Not signed up");
+        require(!attendee.checkedIn, "Already checked in");
+
+        attendee.checkedIn = true;
 
         // Transfer tokens to the attendee
         require(
-            token.transfer(msg.sender, eventDetails.rewardCost),
+            token.transfer(msg.sender, eventInfo.rewardCost),
             "Token transfer failed"
         );
 
-        return attendees[msg.sender].metadata;
+        emit CheckedIn(attendee.metadata);
     }
 
     /**
@@ -182,14 +201,11 @@ contract EventSignup is Ownable {
         onlyOwner
         returns (string[] memory)
     {
-        uint256 count = eventDetails.attendeeCount;
+        uint256 count = attendeeList.length; // Use attendeeList length to save gas
         string[] memory metadataList = new string[](count);
 
-        for (uint256 i; i < count; ) {
+        for (uint256 i = 0; i < count; i++) {
             metadataList[i] = attendees[attendeeList[i]].metadata;
-            unchecked {
-                i++;
-            } // Gas-efficient loop
         }
 
         return metadataList;

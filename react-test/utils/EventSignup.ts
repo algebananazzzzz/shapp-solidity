@@ -1,6 +1,6 @@
 import { ContractTransactionReceipt, ethers, EthersError, EventLog } from "ethers";
-import { EventFactoryContract, signer } from "./PolygonContext";
-import contractABI from "../artifacts/contracts/EventSignup.sol/EventSignup.json";
+import { EventFactoryContract, signer } from "../PolygonContext";
+import contractABI from "../../artifacts/contracts/EventSignup.sol/EventSignup.json";
 
 interface EventDetails {
   name: string;

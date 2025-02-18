@@ -7,9 +7,9 @@ describe("EventFactory", function () {
     async function deployFixture() {
         const [treasury, owner, attendee1] = await ethers.getSigners();
 
-        // Deploy ShearesToken
-        const ShearesToken = await ethers.getContractFactory("ShearesToken");
-        const token = await ShearesToken.deploy("Sheares Token", "SHR", 100000);
+        // Deploy Token
+        const Token = await ethers.getContractFactory("Token");
+        const token = await Token.deploy(" Token", "SHR", 100000);
         await token.waitForDeployment();
 
         // Deploy EventFactory

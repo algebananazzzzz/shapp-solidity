@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import "./EventSignup.sol";
-import "./ShearesToken.sol";
+import "./Token.sol";
 
 /**
  * @title EventFactory
@@ -10,7 +10,7 @@ import "./ShearesToken.sol";
  */
 contract EventFactory {
     address public immutable treasury;
-    ShearesToken public immutable token; // Use ShearesToken
+    Token public immutable token; // Use Token
 
     address[] public activeEvents;
     address[] public inactiveEvents;
@@ -20,13 +20,13 @@ contract EventFactory {
     event EventArchived(address indexed eventAddress);
 
     /**
-     * @dev Initializes the factory with a ShearesToken contract address.
-     * @param _tokenAddress Address of the ShearesToken contract.
+     * @dev Initializes the factory with a Token contract address.
+     * @param _tokenAddress Address of the Token contract.
      */
     constructor(address _tokenAddress) {
         require(_tokenAddress != address(0), "Invalid token address");
 
-        token = ShearesToken(_tokenAddress);
+        token = Token(_tokenAddress);
         treasury = token.treasury();
     }
 

@@ -2,11 +2,11 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 
-describe("ShearesToken", function () {
+describe("Token", function () {
     async function deployTokenFixture() {
         const [owner, addr1, addr2, addr3] = await ethers.getSigners();
-        const Token = await ethers.getContractFactory("ShearesToken");
-        const token = await Token.deploy("Sheares Token", "SHR", 1000);
+        const Token = await ethers.getContractFactory("Token");
+        const token = await Token.deploy(" Token", "SHR", 1000);
 
         const MINTER_ROLE = await token.MINTER_ROLE();
         const BURNER_ROLE = await token.BURNER_ROLE();

@@ -7,9 +7,9 @@ describe("EventSignup", function () {
     // Get signers
     const [treasury, owner, attendee1, attendee2, attendee3] = await ethers.getSigners();
 
-    // Deploy ShearesToken (ERC20)
-    const ShearesToken = await ethers.getContractFactory("ShearesToken");
-    const token = await ShearesToken.deploy("Sheares Token", "SHR", 1000);
+    // Deploy Token (ERC20)
+    const Token = await ethers.getContractFactory("Token");
+    const token = await Token.deploy("HallToken", "SEX", 1000);
 
     // Define event details
     const eventName = "Blockchain Conference";
@@ -76,7 +76,7 @@ describe("EventSignup", function () {
       .to.emit(eventSignup, "SignedUp")
       .withArgs(attendee1.getAddress(), "Attendee1 Metadata");
 
-    const attendeeData = await eventSignup.getAddressMetadata(attendee1.getAddress());
+    const attendeeData = await eventSignup.connect(attendee1).getMetadata();
     expect(attendeeData).to.equal("Attendee1 Metadata");
 
     const isSignedUp = await eventSignup.connect(attendee1).isAttendee();

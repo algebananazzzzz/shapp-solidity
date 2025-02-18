@@ -1,8 +1,8 @@
 import { ContractTransactionReceipt, ethers, EthersError, EventLog } from "ethers";
-import { WelfareFactoryContract, signer, TokenContract } from "./PolygonContext";
-import contractABI from "../artifacts/contracts/WelfareSignup.sol/WelfareSignup.json";
+import { getWelfareFactoryContract, getSigner, getTokenContract } from "../Context";
+import contractABI from "../../artifacts/contracts/WelfareSignup.sol/WelfareSignup.json";
 
-interface WelfareDetails {
+export interface WelfareDetails {
   name: string;
   description: string;
   maxCapacity: number;
@@ -15,6 +15,10 @@ interface WelfareDetails {
 }
 
 export class WelfareContract {
+  private static TokenContract: ethers.Contract;
+  private static WelfareFactoryContract: ethers.Contract;
+  private static signer: ethers.Signer;
+
   private welfare: WelfareDetails;
   private contract: ethers.Contract;
   private contractAddress: string;
@@ -25,9 +29,16 @@ export class WelfareContract {
     this.contractAddress = addr; // Save contract address for logging
   }
 
+  // Initialize the static properties in an async method
+  public static async initialize(): Promise<void> {
+    WelfareContract.WelfareFactoryContract = await getWelfareFactoryContract();
+    WelfareContract.TokenContract = await getTokenContract();
+    WelfareContract.signer = await getSigner();
+  }
+
   static async getContract(addr: string): Promise<WelfareContract> {
     try {
-      const contract = new ethers.Contract(addr, contractABI.abi, signer);
+      const contract = new ethers.Contract(addr, contractABI.abi, WelfareContract.signer);
       const welfareDetails = await contract.welfareDetails();
 
       const welfare = {
@@ -52,7 +63,7 @@ export class WelfareContract {
 
   static async getActiveContracts(): Promise<WelfareContract[]> {
     try {
-      const welfareAddresses: string[] = await WelfareFactoryContract.getActiveWelfares();
+      const welfareAddresses: string[] = await WelfareContract.WelfareFactoryContract.getActiveWelfares();
 
       if (!welfareAddresses.length) {
         console.log("No active welfares found.");
@@ -72,7 +83,7 @@ export class WelfareContract {
 
   static async createContract(welfareDetails: WelfareDetails): Promise<WelfareContract> {
     // 1. Send transaction to create the welfare
-    const tx = await WelfareFactoryContract.createWelfare(
+    const tx = await WelfareContract.WelfareFactoryContract.createWelfare(
       welfareDetails.name,
       welfareDetails.description,
       welfareDetails.maxCapacity,
@@ -86,7 +97,7 @@ export class WelfareContract {
 
     const welfareLog = receipt?.logs.find(log => {
       try {
-        return WelfareFactoryContract.interface.parseLog(log) !== null;
+        return WelfareContract.WelfareFactoryContract.interface.parseLog(log) !== null;
       } catch {
         return false;
       }
@@ -98,7 +109,7 @@ export class WelfareContract {
     }
 
     const deployedAddress: string = welfareLog.args[0];
-    const contract = new ethers.Contract(deployedAddress, contractABI.abi, signer);
+    const contract = new ethers.Contract(deployedAddress, contractABI.abi, WelfareContract.signer);
     return new WelfareContract(welfareDetails, contract, deployedAddress);
   }
 
@@ -119,7 +130,7 @@ export class WelfareContract {
   public async hasSignedUp(): Promise<boolean> {
     try {
       const signedUp = await this.contract.isAttendee();
-      console.log(`Checked signup is ${signedUp} for address ${signer.address} on welfare contract: ${this.contractAddress}`);
+      console.log(`Checked signup is ${signedUp} for address ${await WelfareContract.signer.getAddress()} on welfare contract: ${this.contractAddress}`);
       return signedUp;
     } catch (err) {
       const error = err as EthersError;
@@ -137,7 +148,7 @@ export class WelfareContract {
         return;
       }
 
-      await TokenContract.approve(this.contract.target, this.welfare.redemptionCost);
+      await WelfareContract.TokenContract.approve(this.contract.target, this.welfare.redemptionCost);
 
       console.log(`Attempting to sign up for welfare on contract: ${this.contractAddress}`);
       const tx = await this.contract.signUp(); // Renamed to signUpForWelfare
