@@ -2,117 +2,91 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 
-describe("ShearesToken Contract", function () {
-    let shearesToken: any;
-    let admin: any;
-    let addr1: any;
-    let addr2: any;
+describe("ShearesToken", function () {
+    async function deployTokenFixture() {
+        const [owner, addr1, addr2, addr3] = await ethers.getSigners();
+        const Token = await ethers.getContractFactory("ShearesToken");
+        const token = await Token.deploy("Sheares Token", "SHR", 1000);
 
-    const initialSupply = 1000000; // 1 million tokens
+        const MINTER_ROLE = await token.MINTER_ROLE();
+        const BURNER_ROLE = await token.BURNER_ROLE();
+        const PAUSER_ROLE = await token.PAUSER_ROLE();
 
-    async function deployShearesTokenFixture() {
-        [admin, addr1, addr2] = await ethers.getSigners();
-
-        // Deploy the contract
-        const ShearesToken = await ethers.getContractFactory("ShearesToken");
-        const shearesToken = await ShearesToken.deploy("ShearesToken", "SHR", initialSupply);
-        return shearesToken
+        return { token, owner, addr1, addr2, addr3, MINTER_ROLE, BURNER_ROLE, PAUSER_ROLE };
     }
 
-    it("Should deploy with the correct initial supply", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
-
-        const totalSupply = await shearesToken.totalSupply();
-        expect(totalSupply).to.equal(initialSupply);
-
-        const adminBalance = await shearesToken.balanceOf(await admin.getAddress());
-        expect(adminBalance).to.equal(initialSupply);
+    it("Should assign initial supply to the admin", async function () {
+        const { token, owner } = await loadFixture(deployTokenFixture);
+        const adminBalance = await token.balanceOf(owner.address);
+        expect(adminBalance).to.equal(1000);
     });
 
-    it("Should mint tokens correctly", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
-
-        const mintAmount = 500;
-        await shearesToken.mint(await addr1.getAddress(), mintAmount);
-
-        const addr1Balance = await shearesToken.balanceOf(await addr1.getAddress());
-        expect(addr1Balance).to.equal(mintAmount);
-
-        const totalSupply = await shearesToken.totalSupply();
-        expect(totalSupply).to.equal(initialSupply + mintAmount);
+    it("Should allow only MINTER_ROLE to mint tokens", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await token.mint(addr1.address, 100);
+        expect(await token.balanceOf(addr1.address)).to.equal(100);
     });
 
-    it("Should burn tokens correctly", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
-
-        const burnAmount = 1000;
-        await shearesToken.burn(await admin.getAddress(), burnAmount);
-
-        const adminBalance = await shearesToken.balanceOf(await admin.getAddress());
-        expect(adminBalance).to.equal(initialSupply - burnAmount);
-
-        const totalSupply = await shearesToken.totalSupply();
-        expect(totalSupply).to.equal(initialSupply - burnAmount);
+    it("Should prevent non-minters from minting", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await expect(token.connect(addr1).mint(addr1.address, 50))
+            .to.be.revertedWith(`AccessControl: account ${(await addr1.getAddress()).toLowerCase()} is missing role ${await token.MINTER_ROLE()}`);
     });
 
-    it("Should correctly calculate circulating supply", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
-
-        const mintAmount = 5000;
-        await shearesToken.mint(await addr1.getAddress(), mintAmount);
-
-        const circulatingSupply = await shearesToken.circulatingSupply();
-        expect(circulatingSupply).to.equal(mintAmount);
+    it("Should allow only BURNER_ROLE to burn tokens", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await token.mint(addr1.address, 100);
+        await token.burn(addr1.address, 50);
+        expect(await token.balanceOf(addr1.address)).to.equal(50);
     });
 
-    it("Should correctly return the admin balance", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
-
-        const adminBalance = await shearesToken.adminBalance();
-        expect(adminBalance).to.equal(initialSupply);
+    it("Should prevent non-burners from burning", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await token.mint(addr1.address, 50);
+        await expect(token.connect(addr1).burn(addr1.address, 10))
+            .to.be.revertedWith(
+                `AccessControl: account ${(await addr1.getAddress()).toLowerCase()} is missing role ${await token.BURNER_ROLE()}`);
     });
 
-    it("Should pause and unpause the contract", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
+    it("Should allow only PAUSER_ROLE to pause and unpause", async function () {
+        const { token } = await loadFixture(deployTokenFixture);
+        await token.pause();
+        expect(await token.paused()).to.be.true;
 
-        await shearesToken.pause();
-        await expect(
-            shearesToken.transfer(await addr1.getAddress(), 100)
-        ).to.be.revertedWith("Pausable: paused");
-
-        await shearesToken.unpause();
-        await shearesToken.transfer(await addr1.getAddress(), 100);
-        const addr1Balance = await shearesToken.balanceOf(await addr1.getAddress());
-        expect(addr1Balance).to.equal(100);
+        await token.unpause();
+        expect(await token.paused()).to.be.false;
     });
 
-    it("Should only allow minter to mint tokens", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
-
-        const mintAmount = 1000;
-        await expect(
-            shearesToken.connect(addr1).mint(await addr1.getAddress(), mintAmount)
-        ).to.be.revertedWith(
-            `AccessControl: account ${(await addr1.getAddress()).toLowerCase()} is missing role ${await shearesToken.MINTER_ROLE()}`
-        );
+    it("Should prevent transfers when paused", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await token.pause();
+        await expect(token.transfer(addr1.address, 10))
+            .to.be.revertedWith("Pausable: paused");
     });
 
-    it("Should only allow burner to burn tokens", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
-
-        const burnAmount = 100;
-        await expect(
-            shearesToken.connect(addr1).burn(await admin.getAddress(), burnAmount)
-        ).to.be.revertedWith(
-            `AccessControl: account ${(await addr1.getAddress()).toLowerCase()} is missing role ${await shearesToken.BURNER_ROLE()}`
-        );
+    it("Should allow transfers when unpaused", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await token.transfer(addr1.address, 10);
+        expect(await token.balanceOf(addr1.address)).to.equal(10);
     });
 
-    it("Should only allow pauser to pause the contract", async function () {
-        shearesToken = await loadFixture(deployShearesTokenFixture);
+    it("Should calculate circulating supply correctly", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await token.mint(addr1.address, 200);
+        const circulating = await token.circulatingSupply();
+        expect(circulating).to.equal(200);
+    });
 
-        await expect(shearesToken.connect(addr1).pause()).to.be.revertedWith(
-            `AccessControl: account ${(await addr1.getAddress()).toLowerCase()} is missing role ${await shearesToken.PAUSER_ROLE()}`
-        );
+    it("Should return admin balance correctly", async function () {
+        const { token, owner } = await loadFixture(deployTokenFixture);
+        const adminBalance = await token.adminBalance();
+        expect(adminBalance).to.equal(await token.balanceOf(owner.address));
+    });
+
+    it("Should prevent burning more tokens than available", async function () {
+        const { token, addr1 } = await loadFixture(deployTokenFixture);
+        await token.mint(addr1.address, 50);
+        await expect(token.burn(addr1.address, 100))
+            .to.be.revertedWith("ERC20: burn amount exceeds balance");
     });
 });

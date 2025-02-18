@@ -1,24 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
-interface IERC20 {
-    function balanceOf(address account) external view returns (uint256);
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "./ShearesToken.sol"; // Import ShearesToken
 
-    function allowance(
-        address owner,
-        address spender
-    ) external view returns (uint256);
-
-    function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) external returns (bool);
-}
-
-contract WelfareSignup {
-    IERC20 public token;
-    address public owner;
+contract WelfareSignup is Ownable {
+    ShearesToken public token;
 
     struct Welfare {
         string name;
@@ -47,15 +34,6 @@ contract WelfareSignup {
     );
     event Redeemed(address indexed attendee);
     event Deactivated(address indexed creator);
-    event OwnershipTransferred(
-        address indexed previousOwner,
-        address indexed newOwner
-    );
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only the owner can perform this action");
-        _;
-    }
 
     constructor(
         string memory _name,
@@ -89,8 +67,7 @@ contract WelfareSignup {
             isActive: true
         });
 
-        owner = msg.sender;
-        token = IERC20(_tokenAddress);
+        token = ShearesToken(_tokenAddress);
 
         emit WelfareCreated(
             _name,
@@ -100,6 +77,14 @@ contract WelfareSignup {
             _redemptionEndTime,
             _redemptionCost
         );
+    }
+
+    /**
+     * @dev Checks if a user has already signed up for the welfare.
+     * @return bool True if the user is signed up, otherwise false.
+     */
+    function isAttendee() external view returns (bool) {
+        return attendees[msg.sender];
     }
 
     function signUp() external {
@@ -118,13 +103,17 @@ contract WelfareSignup {
         );
         require(!attendees[msg.sender], "Already signed up");
         require(
-            token.balanceOf(msg.sender) >= welfareDetails.redemptionCost,
-            "Insufficient balance: Not enough tokens to redeem welfare"
-        );
-        require(
             token.allowance(msg.sender, address(this)) >=
                 welfareDetails.redemptionCost,
             "Insufficient allowance: Approval for redemption cost not granted"
+        );
+        require(
+            token.transferFrom(
+                msg.sender,
+                address(this),
+                welfareDetails.redemptionCost
+            ),
+            "Token transfer failed"
         );
 
         attendees[msg.sender] = true;
@@ -142,11 +131,7 @@ contract WelfareSignup {
         require(!redeemed[msg.sender], "You have already redeemed your reward");
         // Transfer tokens to the creator
         require(
-            token.transferFrom(
-                msg.sender,
-                owner,
-                welfareDetails.redemptionCost
-            ),
+            token.transfer(token.treasury(), welfareDetails.redemptionCost),
             "Token transfer failed"
         );
 
@@ -155,17 +140,13 @@ contract WelfareSignup {
     }
 
     function deactivate() external onlyOwner {
+        uint256 balance = token.balanceOf(address(this));
+
+        // Ensure there are tokens to transfer
+        if (balance > 0) {
+            token.transfer(token.treasury(), balance);
+        }
         welfareDetails.isActive = false;
         emit Deactivated(msg.sender);
-    }
-
-    /**
-     * @dev Allows the current owner to transfer ownership to a new address.
-     * Can only be called by the current owner.
-     */
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "New owner is the zero address");
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
     }
 }

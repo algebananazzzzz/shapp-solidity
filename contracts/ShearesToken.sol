@@ -12,16 +12,20 @@ contract ShearesToken is ERC20, AccessControl, Pausable {
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    address private _admin; // Admin address for balance tracking
+    address public immutable treasury;
 
     // Constructor to set the token name, symbol, initial supply, and grant roles
-    constructor(string memory name, string memory symbol, uint256 initialSupply) ERC20(name, symbol) {
-        _admin = msg.sender;
-        _mint(_admin, initialSupply); // Mint initial supply to admin
-        _setupRole(DEFAULT_ADMIN_ROLE, _admin);
-        _setupRole(MINTER_ROLE, _admin);
-        _setupRole(BURNER_ROLE, _admin);
-        _setupRole(PAUSER_ROLE, _admin);
+    constructor(
+        string memory name,
+        string memory symbol,
+        uint256 initialSupply
+    ) ERC20(name, symbol) {
+        treasury = msg.sender;
+        _mint(treasury, initialSupply); // Mint initial supply to admin
+        _setupRole(DEFAULT_ADMIN_ROLE, treasury);
+        _setupRole(MINTER_ROLE, treasury);
+        _setupRole(BURNER_ROLE, treasury);
+        _setupRole(PAUSER_ROLE, treasury);
     }
 
     // Function to mint new tokens
@@ -46,16 +50,20 @@ contract ShearesToken is ERC20, AccessControl, Pausable {
 
     // Function to get the circulating supply (total supply minus admin balance)
     function circulatingSupply() public view returns (uint256) {
-        return totalSupply() - balanceOf(_admin);
+        return totalSupply() - balanceOf(treasury);
     }
 
     // Function to get the admin balance
     function adminBalance() public view returns (uint256) {
-        return balanceOf(_admin);
+        return balanceOf(treasury);
     }
 
     // Override the _beforeTokenTransfer hook to include transfer logic
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override whenNotPaused {
+    function _beforeTokenTransfer(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override whenNotPaused {
         super._beforeTokenTransfer(from, to, amount);
     }
 }

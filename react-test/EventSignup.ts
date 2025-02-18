@@ -1,5 +1,6 @@
-import { ethers, EthersError } from "ethers";
-import { abi, signer } from "./PolygonContext";
+import { ContractTransactionReceipt, ethers, EthersError, EventLog } from "ethers";
+import { EventFactoryContract, signer } from "./PolygonContext";
+import contractABI from "../artifacts/contracts/EventSignup.sol/EventSignup.json";
 
 interface EventDetails {
   name: string;
@@ -9,6 +10,7 @@ interface EventDetails {
   signupEndTime: Date;
   eventStartTime: Date;
   eventEndTime: Date;
+  rewardCost: number;
   creator: string;
   attendeeCount: number;
 }
@@ -26,18 +28,19 @@ export class EventContract {
 
   static async getContract(addr: string): Promise<EventContract> {
     try {
-      const contract = new ethers.Contract(addr, abi, signer);
+      const contract = new ethers.Contract(addr, contractABI.abi, signer);
       const eventDetails = await contract.eventDetails();
 
       const event = {
         name: eventDetails.name,
         description: eventDetails.description,
         maxCapacity: Number(eventDetails.maxCapacity),
-        signupStartTime: new Date(Number(eventDetails.signupStartTime) * 1000), // Convert to milliseconds
+        signupStartTime: new Date(Number(eventDetails.signupStartTime) * 1000),
         signupEndTime: new Date(Number(eventDetails.signupEndTime) * 1000),
         eventStartTime: new Date(Number(eventDetails.eventStartTime) * 1000),
         eventEndTime: new Date(Number(eventDetails.eventEndTime) * 1000),
         creator: eventDetails.creator,
+        rewardCost: Number(eventDetails.rewardCost),
         attendeeCount: Number(eventDetails.attendeeCount),
       };
 
@@ -49,34 +52,88 @@ export class EventContract {
     }
   }
 
+  static async getActiveContracts(): Promise<EventContract[]> {
+    try {
+      const eventAddresses: string[] = await EventFactoryContract.getActiveEvents();
+
+      if (!eventAddresses.length) {
+        console.log("No active events found.");
+        return [];
+      }
+
+      const contracts: EventContract[] = await Promise.all(
+        eventAddresses.map(addr => EventContract.getContract(addr))
+      );
+
+      return contracts;
+    } catch (error) {
+      console.error("Error fetching active contracts:", error);
+      throw new Error("Failed to fetch active event contracts.");
+    }
+  }
+
+  static async createContract(eventDetails: EventDetails): Promise<EventContract> {
+    // 1. Send transaction to create the event
+    const tx = await EventFactoryContract.createEvent(
+      eventDetails.name,
+      eventDetails.description,
+      eventDetails.maxCapacity,
+      eventDetails.signupStartTime,
+      eventDetails.signupEndTime,
+      eventDetails.eventStartTime,
+      eventDetails.eventEndTime,
+      eventDetails.rewardCost
+    );
+
+    const receipt: ContractTransactionReceipt = await tx.wait();
+
+    const eventLog = receipt?.logs.find(log => {
+      try {
+        return EventFactoryContract.interface.parseLog(log) !== null;
+      } catch {
+        return false;
+      }
+    }) as EventLog;
+
+
+    if (!eventLog || !eventLog.args) {
+      throw new Error("EventDeployed event not found in transaction logs.");
+    }
+
+    const deployedAddress: string = eventLog.args[0];
+    const contract = new ethers.Contract(deployedAddress, contractABI.abi, signer);
+    return new EventContract(eventDetails, contract, deployedAddress);
+  }
+
   public getDetails(): EventDetails {
     return this.event;
   }
 
-  // Helper function to check if the current date is within the signup period
   public isWithinSignupPeriod(): boolean {
     const now = new Date();
     return now >= this.event.signupStartTime && now <= this.event.signupEndTime;
   }
 
-  // Helper function to check if the current date is within the redemption period (after signup end, before redemption end)
-  public isWithinRedemptionPeriod(): boolean {
+  public isWithinEventPeriod(): boolean {
     const now = new Date();
-    return now > this.event.signupEndTime && now <= this.event.redemptionEndTime;
+    return now > this.event.eventStartTime && now <= this.event.eventEndTime;
   }
 
   public async hasSignedUp(): Promise<boolean> {
     try {
-      const attendees = await this.contract.attendees(signer.address);
-      console.log(`Checked signup status for address ${signer.address} on event contract: ${this.contractAddress}`);
-      return attendees;
-    } catch (error) {
-      console.error(`Error checking if user is signed up for event contract: ${this.contractAddress}`, error);
+      const signedUp = await this.contract.isAttendee();
+      console.log(`Checked signup is ${signedUp} for address ${signer.address} on event contract: ${this.contractAddress}`);
+      return signedUp;
+    } catch (err) {
+      const error = err as EthersError;
+      console.error(`Error checking if signed up for event on contract: ${this.contractAddress}`,
+        error.shortMessage || error.message
+      );
       throw error;
     }
   }
 
-  public async signUpForWelfare(): Promise<void> {
+  public async signUp(metadata: string): Promise<void> {
     try {
       if (!this.isWithinSignupPeriod()) {
         console.log(`Cannot sign up for event. Current date is outside of signup period.`);
@@ -84,29 +141,47 @@ export class EventContract {
       }
 
       console.log(`Attempting to sign up for event on contract: ${this.contractAddress}`);
-      const tx = await this.contract.signUpForWelfare(); // Renamed to signUpForWelfare
+      const tx = await this.contract.signUp(metadata); // Renamed to signUpForWelfare
       await tx.wait();
       console.log(`Successfully signed up for event on contract: ${this.contractAddress}`);
     } catch (err) {
       const error = err as EthersError;
-      console.error(`Error signing up for event on contract: ${this.contractAddress}`, error.shortMessage);
+      console.error(`Error signing up for event on contract: ${this.contractAddress}`,
+        error.shortMessage || error.message
+      );
+      throw error;
     }
   }
 
-  public async redeemWelfare(): Promise<void> {
+  public async getMetadata(): Promise<string> {
     try {
-      if (!this.isWithinRedemptionPeriod()) {
-        console.log(`Cannot redeem event. Current date is outside of redemption period.`);
-        return;
-      }
-
-      console.log(`Attempting to redeem event on contract: ${this.contractAddress}`);
-      const tx = await this.contract.redeemWelfare(); // Renamed to redeemWelfare
-      await tx.wait();
-      console.log(`Successfully redeemed event on contract: ${this.contractAddress}`);
+      return await this.contract.getMetadata();
     } catch (err) {
       const error = err as EthersError;
-      console.error(`Error redeeming event on contract: ${this.contractAddress}`, error.shortMessage);
+      console.error(
+        `Error getting metadata on contract: ${this.contractAddress}`,
+        error.shortMessage || error.message
+      );
+      throw error;
+    }
+  }
+
+  public async checkIn(): Promise<void> {
+    try {
+      if (!this.isWithinEventPeriod()) {
+        console.error(`Error checking in on contract: ${this.contractAddress}: Current date is outside of the event period.`);
+        throw new Error(`Error checking in on contract: ${this.contractAddress}: Current date is outside of the event period.`);
+      }
+
+      console.log(`Attempting to check in on contract: ${this.contractAddress}`);
+
+      // Send transaction and wait for receipt
+      const tx = await this.contract.checkIn();
+      await tx.wait();
+    } catch (err) {
+      const error = err as EthersError;
+      console.error(`Error checking in on contract: ${this.contractAddress}`, error.shortMessage || error.message);
+      throw error;
     }
   }
 }

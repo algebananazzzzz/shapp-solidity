@@ -2,36 +2,55 @@
 pragma solidity ^0.8.28;
 
 import "./EventSignup.sol";
+import "./ShearesToken.sol";
 
+/**
+ * @title EventFactory
+ * @dev Factory contract for deploying and managing EventSignup contracts.
+ */
 contract EventFactory {
-    // Arrays for active and inactive events (storing only the addresses)
+    address public immutable treasury;
+    ShearesToken public immutable token; // Use ShearesToken
+
     address[] public activeEvents;
     address[] public inactiveEvents;
+    mapping(address => bool) public isActiveEvent; // O(1) lookup for active events
 
-    event EventDeployed(
-        address indexed eventAddress,
-        address indexed creator
-    );
-    event EventDeactivated(
-        address indexed eventAddress,
-        address indexed deactivator
-    );
+    event EventDeployed(address indexed eventAddress);
+    event EventArchived(address indexed eventAddress);
 
     /**
-     * @dev Creates a new event contract and stores its address in the active array.
+     * @dev Initializes the factory with a ShearesToken contract address.
+     * @param _tokenAddress Address of the ShearesToken contract.
+     */
+    constructor(address _tokenAddress) {
+        require(_tokenAddress != address(0), "Invalid token address");
+
+        token = ShearesToken(_tokenAddress);
+        treasury = token.treasury();
+    }
+
+    /**
+     * @dev Creates a new event contract and stores it in `activeEvents`.
+     * @param _name Event name.
+     * @param _description Event description.
+     * @param _maxCapacity Maximum number of attendees.
+     * @param _signupStartTime Signup start timestamp.
+     * @param _signupEndTime Signup end timestamp.
+     * @param _eventStartTime Event start timestamp.
+     * @param _eventEndTime Event end timestamp.
+     * @param _rewardCost Reward tokens per attendee.
      */
     function createEvent(
-        string memory _name,
-        string memory _description,
+        string calldata _name,
+        string calldata _description,
         uint16 _maxCapacity,
         uint256 _signupStartTime,
         uint256 _signupEndTime,
         uint256 _eventStartTime,
         uint256 _eventEndTime,
-        uint8 _rewardCost,
-        address _tokenAddress
+        uint8 _rewardCost
     ) external {
-        // Deploy the new event contract
         EventSignup newEvent = new EventSignup(
             _name,
             _description,
@@ -41,56 +60,73 @@ contract EventFactory {
             _eventStartTime,
             _eventEndTime,
             _rewardCost,
-            _tokenAddress
+            address(token)
         );
 
-        // Add to active events list
+        // Store the event and mark it as active
         activeEvents.push(address(newEvent));
+        isActiveEvent[address(newEvent)] = true;
 
-        // Transfer ownership to the creator
+        // Transfer event ownership to the creator
         newEvent.transferOwnership(msg.sender);
 
-        emit EventDeployed(address(newEvent), msg.sender);
+        require(
+            token.balanceOf(address(this)) >= _rewardCost * _maxCapacity,
+            "Factory has insufficient tokens"
+        );
+
+        // Approve the event contract to transfer tokens from the treasury
+        token.transfer(address(newEvent), _rewardCost * _maxCapacity);
+
+        emit EventDeployed(address(newEvent));
     }
 
     /**
-     * @dev Deactivates a deployed event contract and moves it to the inactive array.
-     * Only the creator of the contract can deactivate it.
+     * @dev Moves an active event to the inactive list.
+     * This function is separate from deactivation and should be called after deactivation.
+     * @param eventAddress Address of the event contract to archive.
      */
-    function deactivateEvent(address eventAddress) external {
+    function archiveEvent(address eventAddress) external {
         require(eventAddress != address(0), "Invalid address");
-
-        // Check if the event is in the active list
-        bool found = false;
-        uint256 index;
-
-        for (uint256 i = 0; i < activeEvents.length; i++) {
-            if (activeEvents[i] == eventAddress) {
-                index = i;
-                found = true;
-                break;
-            }
-        }
-
-        require(found, "Event not found in active list");
-
-        EventSignup eventItem = EventSignup(eventAddress);
         require(
-            msg.sender == eventItem.owner(),
-            "Only the owner can deactivate this event"
+            isActiveEvent[eventAddress],
+            "Event not found or already inactive"
         );
 
-        // Deactivate the event contract
-        eventItem.deactivate();
+        EventSignup eventItem = EventSignup(eventAddress);
 
-        // Move the event to the inactive list
+        // Ensure only the event owner can deactivate
+        require(
+            msg.sender == eventItem.owner(),
+            "Ownable: caller is not the owner"
+        );
+
+        // Mark event as inactive
+        isActiveEvent[eventAddress] = false;
         inactiveEvents.push(eventAddress);
 
-        // Remove from active list (swap with the last element and pop)
+        // Remove event from activeEvents (swap & pop for gas efficiency)
+        uint256 index = findEventIndex(eventAddress);
         activeEvents[index] = activeEvents[activeEvents.length - 1];
         activeEvents.pop();
 
-        emit EventDeactivated(eventAddress, msg.sender);
+        emit EventArchived(eventAddress);
+    }
+
+    /**
+     * @dev Finds the index of an event in the activeEvents array.
+     * @param eventAddress Address of the event contract.
+     * @return uint256 Index of the event in activeEvents.
+     */
+    function findEventIndex(
+        address eventAddress
+    ) internal view returns (uint256) {
+        for (uint256 i = 0; i < activeEvents.length; i++) {
+            if (activeEvents[i] == eventAddress) {
+                return i;
+            }
+        }
+        revert("Event not found");
     }
 
     /**

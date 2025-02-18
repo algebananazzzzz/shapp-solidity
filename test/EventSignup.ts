@@ -1,157 +1,233 @@
-const { expect } = require("chai");
-const { ethers } = require("hardhat");
-const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+import { expect } from "chai";
+import { ethers } from "hardhat";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 
-describe("EventSignup Contract", function () {
+describe("EventSignup", function () {
   async function deployEventSignupFixture() {
-    const [creator, attendee1, attendee2] = await ethers.getSigners();
+    // Get signers
+    const [treasury, owner, attendee1, attendee2, attendee3] = await ethers.getSigners();
 
-    // Event parameters
-    const name = "Blockchain Event";
-    const description = "Learn about smart contracts";
+    // Deploy ShearesToken (ERC20)
+    const ShearesToken = await ethers.getContractFactory("ShearesToken");
+    const token = await ShearesToken.deploy("Sheares Token", "SHR", 1000);
+
+    // Define event details
+    const eventName = "Blockchain Conference";
+    const eventDescription = "A Web3 Event";
     const maxCapacity = 2;
-    const tokensPerCheckIn = 2;
+    const rewardCost = 10;
+    const signupStartTime = await time.latest() + 1800;
+    const signupEndTime = signupStartTime + 3600; // +1 hour
+    const eventStartTime = signupEndTime + 3600; // +1 hour
+    const eventEndTime = eventStartTime + 7200; // +2 hours
 
-    // Time setup
-    const currentTime = await time.latest();
-    const signupStartTime = currentTime + 100; // Signup starts in 100 seconds
-    const signupEndTime = currentTime + 1000;  // Signup ends in 1000 seconds
-    const eventStartTime = currentTime + 1100; // Event starts in 1100 seconds
-    const eventEndTime = currentTime + 2000;   // Event ends in 2000 seconds
-
-    // Deploy ShearesToken
-    const Token = await ethers.getContractFactory("ShearesToken");
-    const token = await Token.deploy("ShearesToken", "SHR", 1000000);
-
-    // Deploy contract
+    // Deploy EventSignup contract
     const EventSignup = await ethers.getContractFactory("EventSignup");
-    const eventSignup = await EventSignup.deploy(
-      name,
-      description,
+    const eventSignup = await EventSignup.connect(owner).deploy(
+      eventName,
+      eventDescription,
       maxCapacity,
       signupStartTime,
       signupEndTime,
       eventStartTime,
       eventEndTime,
-      tokensPerCheckIn,
+      rewardCost,
       token.getAddress()
     );
+    await token.transfer(eventSignup.getAddress(), maxCapacity * rewardCost);
 
-    await token.increaseAllowance(eventSignup.getAddress(), maxCapacity * tokensPerCheckIn)
-    return { eventSignup, creator, attendee1, attendee2, signupStartTime, signupEndTime, eventStartTime, eventEndTime, token };
+    // Treasury approves eventSignup to transfer tokens
+    await token.connect(treasury).approve(eventSignup.target, rewardCost * maxCapacity);
+
+    return {
+      token,
+      eventSignup,
+      eventName,
+      eventDescription,
+      maxCapacity,
+      signupStartTime: signupStartTime + 10,
+      signupEndTime: signupEndTime + 10,
+      eventStartTime: eventStartTime + 10,
+      eventEndTime: eventEndTime + 10,
+      rewardCost,
+      treasury,
+      owner,
+      attendee1,
+      attendee2,
+      attendee3
+    };
   }
 
   it("Should deploy the contract with correct event details", async function () {
-    const { eventSignup } = await loadFixture(deployEventSignupFixture);
+    const { eventSignup, eventName, eventDescription, maxCapacity } = await loadFixture(deployEventSignupFixture);
     const eventDetails = await eventSignup.eventDetails();
-    expect(eventDetails.name).to.equal("Blockchain Event");
-    expect(eventDetails.maxCapacity).to.equal(2);
+    expect(eventDetails.name).to.equal(eventName);
+    expect(eventDetails.description).to.equal(eventDescription);
+    expect(eventDetails.maxCapacity).to.equal(maxCapacity);
   });
 
-  it("Should allow users to sign up during the sign-up period", async function () {
+  it("Should allow users to sign up with metadata", async function () {
     const { eventSignup, attendee1, signupStartTime } = await loadFixture(deployEventSignupFixture);
 
     // Move time to after signupStartTime
-    await time.increaseTo(signupStartTime + 10);
+    await time.increaseTo(signupStartTime + 1);
 
-    await eventSignup.connect(attendee1).signUp();
-    const isSignedUp = await eventSignup.attendees(attendee1.address);
+    await expect(eventSignup.connect(attendee1).signUp("Attendee1 Metadata"))
+      .to.emit(eventSignup, "SignedUp")
+      .withArgs(attendee1.getAddress(), "Attendee1 Metadata");
+
+    const attendeeData = await eventSignup.getAddressMetadata(attendee1.getAddress());
+    expect(attendeeData).to.equal("Attendee1 Metadata");
+
+    const isSignedUp = await eventSignup.connect(attendee1).isAttendee();
     expect(isSignedUp).to.be.true;
   });
 
   it("Should prevent sign-up before the sign-up period starts", async function () {
     const { eventSignup, attendee1 } = await loadFixture(deployEventSignupFixture);
-    await expect(eventSignup.connect(attendee1).signUp()).to.be.revertedWith("Signup has not started yet");
+    await expect(eventSignup.connect(attendee1).signUp("Attendee1 Metadata")).to.be.revertedWith("Signup not started");
   });
 
   it("Should prevent sign-up after the sign-up period ends", async function () {
     const { eventSignup, attendee1, signupEndTime } = await loadFixture(deployEventSignupFixture);
 
     // Move time to after signupEndTime
-    await time.increaseTo(signupEndTime + 10);
+    await time.increaseTo(signupEndTime + 1);
 
-    await expect(eventSignup.connect(attendee1).signUp()).to.be.revertedWith("Signup has ended");
+    await expect(eventSignup.connect(attendee1).signUp("Attendee1 Metadata")).to.be.revertedWith("Signup ended");
   });
 
   it("Should prevent sign-up if event is full", async function () {
-    const { eventSignup, attendee1, attendee2, signupStartTime } = await loadFixture(deployEventSignupFixture);
+    const { eventSignup, attendee1, attendee2, attendee3, signupStartTime } = await loadFixture(deployEventSignupFixture);
 
     // Move time to after signupStartTime
-    await time.increaseTo(signupStartTime + 10);
+    await time.increaseTo(signupStartTime + 1);
 
-    await eventSignup.connect(attendee1).signUp();
-    await eventSignup.connect(attendee2).signUp();
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
+    await eventSignup.connect(attendee2).signUp("Attendee2 Metadata");
 
     // Another attendee tries to sign up but capacity is full
-    const [_, __, ___, attendee3] = await ethers.getSigners();
-    await expect(eventSignup.connect(attendee3).signUp()).to.be.revertedWith("Event is full");
+    await expect(eventSignup.connect(attendee3).signUp("Attendee3 Metadata")).to.be.revertedWith("Event full");
   });
 
-  it("Should allow users to check in during the event time", async function () {
-    const { eventSignup, attendee1, signupStartTime, eventStartTime } = await loadFixture(deployEventSignupFixture);
+  it("Should prevent duplicate signups", async function () {
+    const { eventSignup, signupStartTime, attendee1 } = await loadFixture(deployEventSignupFixture);
 
-    // Move time to signup period and sign up
-    await time.increaseTo(signupStartTime + 10);
-    await eventSignup.connect(attendee1).signUp();
+    await time.increaseTo(signupStartTime + 1);
 
-    // Move time to event start
-    await time.increaseTo(eventStartTime + 10);
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
 
-    await eventSignup.connect(attendee1).checkIn();
-    const hasRedeemed = await eventSignup.redeemed(attendee1.address);
-    expect(hasRedeemed).to.be.true;
+    await expect(eventSignup.connect(attendee1).signUp("Duplicate Metadata")).to.be.revertedWith(
+      "Already signed up"
+    );
+  });
+
+  it("Should allow check-in and reward tokens", async function () {
+    const { token, eventSignup, signupStartTime, eventStartTime, attendee1, rewardCost } = await loadFixture(deployEventSignupFixture);
+
+    await time.increaseTo(signupStartTime + 1);
+
+    // Sign up the attendee
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
+
+    // Fast-forward time to event start
+    await time.increaseTo(eventStartTime + 1);
+
+    // Check balance before check-in
+    const balanceBefore = await token.balanceOf(attendee1.getAddress());
+
+    // Check-in
+    await expect(eventSignup.connect(attendee1).checkIn()).to.emit(eventSignup, "CheckedIn");
+
+    // Check balance after check-in
+    const balanceAfter = await token.balanceOf(attendee1.getAddress());
+    expect(balanceAfter).to.equal(balanceBefore + BigInt(rewardCost));
   });
 
   it("Should prevent check-in before the event starts", async function () {
     const { eventSignup, attendee1, signupStartTime } = await loadFixture(deployEventSignupFixture);
 
     // Move time to signup period and sign up
-    await time.increaseTo(signupStartTime + 10);
-    await eventSignup.connect(attendee1).signUp();
+    await time.increaseTo(signupStartTime + 1);
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
 
     // Try to check in before event starts
-    await expect(eventSignup.connect(attendee1).checkIn()).to.be.revertedWith("Event has not started yet");
+    await expect(eventSignup.connect(attendee1).checkIn()).to.be.revertedWith("Event not started");
   });
 
   it("Should prevent check-in after the event ends", async function () {
     const { eventSignup, attendee1, signupStartTime, eventEndTime } = await loadFixture(deployEventSignupFixture);
 
     // Move time to signup period and sign up
-    await time.increaseTo(signupStartTime + 10);
-    await eventSignup.connect(attendee1).signUp();
+    await time.increaseTo(signupStartTime + 1);
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
 
     // Move time to after event ends
-    await time.increaseTo(eventEndTime + 10);
+    await time.increaseTo(eventEndTime + 1);
 
-    await expect(eventSignup.connect(attendee1).checkIn()).to.be.revertedWith("Event has ended");
+    await expect(eventSignup.connect(attendee1).checkIn()).to.be.revertedWith("Event ended");
   });
 
   it("Should prevent duplicate check-in", async function () {
     const { eventSignup, attendee1, signupStartTime, eventStartTime } = await loadFixture(deployEventSignupFixture);
 
     // Move time to signup period and sign up
-    await time.increaseTo(signupStartTime + 10);
-    await eventSignup.connect(attendee1).signUp();
+    await time.increaseTo(signupStartTime + 1);
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
 
     // Move time to event start
-    await time.increaseTo(eventStartTime + 10);
+    await time.increaseTo(eventStartTime + 1);
 
     // First check-in
     await eventSignup.connect(attendee1).checkIn();
 
     // Attempt duplicate check-in
-    await expect(eventSignup.connect(attendee1).checkIn()).to.be.revertedWith("You have already checked in for the event");
+    await expect(eventSignup.connect(attendee1).checkIn()).to.be.revertedWith("Already checked in");
   });
 
-  it("Should allow the creator to deactivate the event", async function () {
-    const { eventSignup, creator } = await loadFixture(deployEventSignupFixture);
-    await eventSignup.connect(creator).deactivate();
+  it("Should allow owner to deactivate the event", async function () {
+    const { eventSignup, owner } = await loadFixture(deployEventSignupFixture);
+    await eventSignup.connect(owner).deactivate();
     const eventDetails = await eventSignup.eventDetails();
     expect(eventDetails.isActive).to.be.false;
   });
 
-  it("Should prevent non-creators from deactivating the event", async function () {
+  it("Should prevent non-owners from deactivating the event", async function () {
     const { eventSignup, attendee1 } = await loadFixture(deployEventSignupFixture);
-    await expect(eventSignup.connect(attendee1).deactivate()).to.be.revertedWith("Only the creator can perform this action");
+    await expect(eventSignup.connect(attendee1).deactivate()).to.be.revertedWith("Ownable: caller is not the owner");
+  });
+
+  it("Should prevent signups after event is deactivated", async function () {
+    const { eventSignup, attendee1, owner } = await loadFixture(deployEventSignupFixture);
+
+    await eventSignup.connect(owner).deactivate();
+
+    await expect(eventSignup.connect(attendee1).signUp("Metadata")).to.be.revertedWith(
+      "Event is not active"
+    );
+  });
+
+  it("Should allow owner to retrieve all attendee metadata", async function () {
+    const { eventSignup, signupStartTime, attendee1, attendee2, owner } = await loadFixture(deployEventSignupFixture);
+
+    await time.increaseTo(signupStartTime + 1);
+
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
+    await eventSignup.connect(attendee2).signUp("Attendee2 Metadata");
+
+    const metadataList = await eventSignup.connect(owner).getAllMetadata();
+    expect(metadataList).to.deep.equal(["Attendee1 Metadata", "Attendee2 Metadata"]);
+  });
+
+  it("Should prevent non-owners from retrieving metadata", async function () {
+    const { eventSignup, signupStartTime, attendee1, attendee2 } = await loadFixture(deployEventSignupFixture);
+
+    await time.increaseTo(signupStartTime + 1);
+
+    await eventSignup.connect(attendee1).signUp("Attendee1 Metadata");
+
+    await expect(eventSignup.connect(attendee2).getAllMetadata()).to.be.revertedWith(
+      "Ownable: caller is not the owner"
+    );
   });
 });

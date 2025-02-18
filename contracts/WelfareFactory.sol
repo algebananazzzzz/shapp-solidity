@@ -2,35 +2,53 @@
 pragma solidity ^0.8.28;
 
 import "./WelfareSignup.sol";
+import "./ShearesToken.sol";
 
+/**
+ * @title WelfareFactory
+ * @dev Factory contract for deploying and managing WelfareSignup contracts.
+ */
 contract WelfareFactory {
-    // Arrays for active and inactive welfares (storing only the addresses)
+    address public immutable treasury;
+    ShearesToken public immutable token; // Use ShearesToken
+
     address[] public activeWelfares;
     address[] public inactiveWelfares;
+    mapping(address => bool) public isActiveWelfare; // O(1) lookup for active welfares
 
-    event WelfareDeployed(
-        address indexed welfareAddress,
-        address indexed creator
-    );
-    event WelfareDeactivated(
-        address indexed welfareAddress,
-        address indexed deactivator
-    );
+    event WelfareDeployed(address indexed welfareAddress);
+    event WelfareArchived(address indexed welfareAddress);
 
     /**
-     * @dev Creates a new welfare contract and stores its address in the active array.
+     * @dev Initializes the factory with a ShearesToken contract address.
+     * @param _tokenAddress Address of the ShearesToken contract.
+     */
+    constructor(address _tokenAddress) {
+        require(_tokenAddress != address(0), "Invalid token address");
+
+        token = ShearesToken(_tokenAddress);
+        treasury = token.treasury();
+    }
+
+    /**
+     * @dev Creates a new welfare contract and stores it in `activeWelfares`.
+     * @param _name Welfare name.
+     * @param _description Welfare description.
+     * @param _maxCapacity Maximum number of attendees.
+     * @param _signupStartTime Signup start timestamp.
+     * @param _signupEndTime Signup end timestamp.
+     * @param _redemptionEndTime Redemption start timestamp.
+     * @param _redemptionCost Cost of tokens per attendee.
      */
     function createWelfare(
-        string memory _name,
-        string memory _description,
+        string calldata _name,
+        string calldata _description,
         uint16 _maxCapacity,
         uint256 _signupStartTime,
         uint256 _signupEndTime,
         uint256 _redemptionEndTime,
-        uint8 _redemptionCost,
-        address _tokenAddress
+        uint8 _redemptionCost
     ) external {
-        // Deploy the new welfare contract
         WelfareSignup newWelfare = new WelfareSignup(
             _name,
             _description,
@@ -39,56 +57,65 @@ contract WelfareFactory {
             _signupEndTime,
             _redemptionEndTime,
             _redemptionCost,
-            _tokenAddress
+            address(token)
         );
 
-        // Add to active welfares list
+        // Store the welfare and mark it as active
         activeWelfares.push(address(newWelfare));
+        isActiveWelfare[address(newWelfare)] = true;
 
-        // Transfer ownership to the creator
+        // Transfer welfare ownership to the creator
         newWelfare.transferOwnership(msg.sender);
 
-        emit WelfareDeployed(address(newWelfare), msg.sender);
+        emit WelfareDeployed(address(newWelfare));
     }
 
     /**
-     * @dev Deactivates a deployed welfare contract and moves it to the inactive array.
-     * Only the creator of the contract can deactivate it.
+     * @dev Moves an active welfare to the inactive list.
+     * This function is separate from deactivation and should be called after deactivation.
+     * @param welfareAddress Address of the welfare contract to archive.
      */
-    function deactivateWelfare(address welfareAddress) external {
+    function archiveWelfare(address welfareAddress) external {
         require(welfareAddress != address(0), "Invalid address");
-
-        // Check if the welfare is in the active list
-        bool found = false;
-        uint256 index;
-
-        for (uint256 i = 0; i < activeWelfares.length; i++) {
-            if (activeWelfares[i] == welfareAddress) {
-                index = i;
-                found = true;
-                break;
-            }
-        }
-
-        require(found, "Welfare not found in active list");
-
-        WelfareSignup welfare = WelfareSignup(welfareAddress);
         require(
-            msg.sender == welfare.owner(),
-            "Only the owner can deactivate this welfare"
+            isActiveWelfare[welfareAddress],
+            "Welfare not found or already inactive"
         );
 
-        // Deactivate the welfare contract
-        welfare.deactivate();
+        WelfareSignup welfareItem = WelfareSignup(welfareAddress);
 
-        // Move the welfare to the inactive list
+        // Ensure only the welfare owner can deactivate
+        require(
+            msg.sender == welfareItem.owner(),
+            "Ownable: caller is not the owner"
+        );
+
+        // Mark welfare as inactive
+        isActiveWelfare[welfareAddress] = false;
         inactiveWelfares.push(welfareAddress);
 
-        // Remove from active list (swap with the last element and pop)
+        // Remove welfare from activeWelfares (swap & pop for gas efficiency)
+        uint256 index = findWelfareIndex(welfareAddress);
         activeWelfares[index] = activeWelfares[activeWelfares.length - 1];
         activeWelfares.pop();
 
-        emit WelfareDeactivated(welfareAddress, msg.sender);
+        emit WelfareArchived(welfareAddress);
+    }
+
+    /**
+     * @dev Finds the index of an welfare in the activeWelfares array.
+     * @param welfareAddress Address of the welfare contract.
+     * @return uint256 Index of the welfare in activeWelfares.
+     */
+    function findWelfareIndex(
+        address welfareAddress
+    ) internal view returns (uint256) {
+        for (uint256 i = 0; i < activeWelfares.length; i++) {
+            if (activeWelfares[i] == welfareAddress) {
+                return i;
+            }
+        }
+        revert("Welfare not found");
     }
 
     /**

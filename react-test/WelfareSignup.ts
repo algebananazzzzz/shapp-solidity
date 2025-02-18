@@ -1,5 +1,6 @@
-import { ethers, EthersError } from "ethers";
-import { abi, signer } from "./PolygonContext";
+import { ContractTransactionReceipt, ethers, EthersError, EventLog } from "ethers";
+import { WelfareFactoryContract, signer, TokenContract } from "./PolygonContext";
+import contractABI from "../artifacts/contracts/WelfareSignup.sol/WelfareSignup.json";
 
 interface WelfareDetails {
   name: string;
@@ -8,6 +9,7 @@ interface WelfareDetails {
   signupStartTime: Date;
   signupEndTime: Date;
   redemptionEndTime: Date;
+  redemptionCost: number;
   creator: string;
   attendeeCount: number;
 }
@@ -25,17 +27,18 @@ export class WelfareContract {
 
   static async getContract(addr: string): Promise<WelfareContract> {
     try {
-      const contract = new ethers.Contract(addr, abi, signer);
-      const welfareDetails = await contract.welfareDetails(); // Renamed to welfareDetails
+      const contract = new ethers.Contract(addr, contractABI.abi, signer);
+      const welfareDetails = await contract.welfareDetails();
 
       const welfare = {
         name: welfareDetails.name,
         description: welfareDetails.description,
         maxCapacity: Number(welfareDetails.maxCapacity),
-        signupStartTime: new Date(Number(welfareDetails.signupStartTime) * 1000), // Convert to milliseconds
+        signupStartTime: new Date(Number(welfareDetails.signupStartTime) * 1000),
         signupEndTime: new Date(Number(welfareDetails.signupEndTime) * 1000),
         redemptionEndTime: new Date(Number(welfareDetails.redemptionEndTime) * 1000),
         creator: welfareDetails.creator,
+        redemptionCost: Number(welfareDetails.redemptionCost),
         attendeeCount: Number(welfareDetails.attendeeCount),
       };
 
@@ -47,64 +50,124 @@ export class WelfareContract {
     }
   }
 
+  static async getActiveContracts(): Promise<WelfareContract[]> {
+    try {
+      const welfareAddresses: string[] = await WelfareFactoryContract.getActiveWelfares();
+
+      if (!welfareAddresses.length) {
+        console.log("No active welfares found.");
+        return [];
+      }
+
+      const contracts: WelfareContract[] = await Promise.all(
+        welfareAddresses.map(addr => WelfareContract.getContract(addr))
+      );
+
+      return contracts;
+    } catch (error) {
+      console.error("Error fetching active contracts:", error);
+      throw new Error("Failed to fetch active welfare contracts.");
+    }
+  }
+
+  static async createContract(welfareDetails: WelfareDetails): Promise<WelfareContract> {
+    // 1. Send transaction to create the welfare
+    const tx = await WelfareFactoryContract.createWelfare(
+      welfareDetails.name,
+      welfareDetails.description,
+      welfareDetails.maxCapacity,
+      welfareDetails.signupStartTime,
+      welfareDetails.signupEndTime,
+      welfareDetails.redemptionEndTime,
+      welfareDetails.redemptionCost
+    );
+
+    const receipt: ContractTransactionReceipt = await tx.wait();
+
+    const welfareLog = receipt?.logs.find(log => {
+      try {
+        return WelfareFactoryContract.interface.parseLog(log) !== null;
+      } catch {
+        return false;
+      }
+    }) as EventLog;
+
+
+    if (!welfareLog || !welfareLog.args) {
+      throw new Error("WelfareDeployed welfare not found in transaction logs.");
+    }
+
+    const deployedAddress: string = welfareLog.args[0];
+    const contract = new ethers.Contract(deployedAddress, contractABI.abi, signer);
+    return new WelfareContract(welfareDetails, contract, deployedAddress);
+  }
+
   public getDetails(): WelfareDetails {
     return this.welfare;
   }
 
-  // Helper function to check if the current date is within the signup period
   public isWithinSignupPeriod(): boolean {
     const now = new Date();
     return now >= this.welfare.signupStartTime && now <= this.welfare.signupEndTime;
   }
 
-  // Helper function to check if the current date is within the redemption period (after signup end, before redemption end)
   public isWithinRedemptionPeriod(): boolean {
     const now = new Date();
-    return now > this.welfare.signupEndTime && now <= this.welfare.redemptionEndTime;
+    return now <= this.welfare.redemptionEndTime;
   }
 
   public async hasSignedUp(): Promise<boolean> {
     try {
-      const attendees = await this.contract.attendees(signer.address);
-      console.log(`Checked signup status for address ${signer.address} on welfare contract: ${this.contractAddress}`);
-      return attendees;
-    } catch (error) {
-      console.error(`Error checking if user is signed up for welfare contract: ${this.contractAddress}`, error);
+      const signedUp = await this.contract.isAttendee();
+      console.log(`Checked signup is ${signedUp} for address ${signer.address} on welfare contract: ${this.contractAddress}`);
+      return signedUp;
+    } catch (err) {
+      const error = err as EthersError;
+      console.error(`Error checking if signed up for welfare on contract: ${this.contractAddress}`,
+        error.shortMessage || error.message
+      );
       throw error;
     }
   }
 
-  public async signUpForWelfare(): Promise<void> {
+  public async signUp(): Promise<void> {
     try {
       if (!this.isWithinSignupPeriod()) {
         console.log(`Cannot sign up for welfare. Current date is outside of signup period.`);
         return;
       }
 
+      await TokenContract.approve(this.contract.target, this.welfare.redemptionCost);
+
       console.log(`Attempting to sign up for welfare on contract: ${this.contractAddress}`);
-      const tx = await this.contract.signUpForWelfare(); // Renamed to signUpForWelfare
+      const tx = await this.contract.signUp(); // Renamed to signUpForWelfare
       await tx.wait();
       console.log(`Successfully signed up for welfare on contract: ${this.contractAddress}`);
     } catch (err) {
       const error = err as EthersError;
-      console.error(`Error signing up for welfare on contract: ${this.contractAddress}`, error.shortMessage);
+      console.error(`Error signing up for welfare on contract: ${this.contractAddress}`,
+        error.shortMessage || error.message
+      );
+      throw error;
     }
   }
 
-  public async redeemWelfare(): Promise<void> {
+  public async redeem(): Promise<void> {
     try {
       if (!this.isWithinRedemptionPeriod()) {
-        console.log(`Cannot redeem welfare. Current date is outside of redemption period.`);
-        return;
+        console.error(`Error checking in on contract: ${this.contractAddress}: Current date is outside of the redemption period.`);
+        throw new Error(`Error checking in on contract: ${this.contractAddress}: Current date is outside of the redemption period.`);
       }
 
       console.log(`Attempting to redeem welfare on contract: ${this.contractAddress}`);
-      const tx = await this.contract.redeemWelfare(); // Renamed to redeemWelfare
+
+      // Send transaction and wait for receipt
+      const tx = await this.contract.redeem();
       await tx.wait();
-      console.log(`Successfully redeemed welfare on contract: ${this.contractAddress}`);
     } catch (err) {
       const error = err as EthersError;
-      console.error(`Error redeeming welfare on contract: ${this.contractAddress}`, error.shortMessage);
+      console.error(`Error checking in on contract: ${this.contractAddress}`, error.shortMessage || error.message);
+      throw error;
     }
   }
 }

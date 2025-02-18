@@ -1,64 +1,55 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
-interface IERC20 {
-    function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) external returns (bool);
-}
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "./ShearesToken.sol"; // Import the ShearesToken contract
 
-contract EventSignup {
-    IERC20 public token;
-    address public owner;
+/**
+ * @title EventSignup
+ * @dev This contract allows users to sign up for events and get rewarded with ShearesToken upon check-in.
+ */
+contract EventSignup is Ownable {
+    ShearesToken public immutable token; // Immutable reference to the ERC20 token contract
 
     struct Event {
         string name;
         string description;
-        uint16 maxCapacity;
-        uint256 signupStartTime;
-        uint256 signupEndTime;
-        uint256 eventStartTime;
-        uint256 eventEndTime;
-        uint8 rewardCost;
-        uint16 attendeeCount;
-        bool isActive;
+        uint16 maxCapacity; // Max number of attendees
+        uint16 attendeeCount; // Current number of signed-up attendees
+        uint256 signupStartTime; // When signups begin
+        uint256 signupEndTime; // When signups end
+        uint256 eventStartTime; // When the event begins
+        uint256 eventEndTime; // When the event ends
+        uint8 rewardCost; // Tokens rewarded for check-in
+        bool isActive; // Whether the event is active
     }
 
     struct AttendeeDetails {
-        string metadata;
-        bool checkedIn;
+        bool checkedIn; // Whether the user has checked in
+        string metadata; // Additional metadata (e.g., attendee details)
     }
 
-    Event public eventDetails;
-    mapping(address => AttendeeDetails) public attendees;
-    address[] public addresses;
+    Event public eventDetails; // Store event details
+    mapping(address => AttendeeDetails) private attendees; // Store attendees' information
+    address[] private attendeeList; // List of attendee addresses (for metadata retrieval)
 
-    event SignedUp(address indexed attendee);
-    event EventCreated(
-        string name,
-        uint16 maxCapacity,
-        uint256 signupStartTime,
-        uint256 signupEndTime,
-        uint256 eventStartTime,
-        uint256 eventEndTime
-    );
-    event CheckedIn(address indexed attendee);
+    // Events for logging
+    event SignedUp(address indexed attendee, string metadata);
+    event EventCreated(string name, uint16 maxCapacity);
     event Deactivated(address indexed creator);
-    event OwnershipTransferred(
-        address indexed previousOwner,
-        address indexed newOwner
-    );
 
-    modifier onlyOwner() {
-        require(
-            msg.sender == owner,
-            "Only the creator can perform this action"
-        );
-        _;
-    }
-
+    /**
+     * @dev Constructor initializes the event details and links the ERC20 token.
+     * @param _name Name of the event
+     * @param _description Description of the event
+     * @param _maxCapacity Maximum number of attendees
+     * @param _signupStartTime Timestamp when signups start
+     * @param _signupEndTime Timestamp when signups end
+     * @param _eventStartTime Timestamp when event starts
+     * @param _eventEndTime Timestamp when event ends
+     * @param _rewardCost Number of tokens rewarded on check-in
+     * @param _tokenAddress Address of the ShearesToken contract
+     */
     constructor(
         string memory _name,
         string memory _description,
@@ -71,133 +62,148 @@ contract EventSignup {
         address _tokenAddress
     ) {
         require(_maxCapacity > 0, "Capacity must be greater than 0");
-        require(
-            _signupStartTime < _signupEndTime,
-            "Signup start time must be before signup end time"
-        );
+        require(_signupStartTime < _signupEndTime, "Invalid signup time");
         require(
             _signupEndTime < _eventStartTime,
-            "Signup end time must be before event start time"
+            "Signup must end before event starts"
         );
         require(
             _eventStartTime < _eventEndTime,
-            "Event start time must be before event end time"
+            "Event must end after it starts"
         );
 
         eventDetails = Event({
             name: _name,
             description: _description,
             maxCapacity: _maxCapacity,
+            attendeeCount: 0,
             signupStartTime: _signupStartTime,
             signupEndTime: _signupEndTime,
             eventStartTime: _eventStartTime,
             eventEndTime: _eventEndTime,
             rewardCost: _rewardCost,
-            attendeeCount: 0,
             isActive: true
         });
 
-        owner = msg.sender;
-        token = IERC20(_tokenAddress);
+        token = ShearesToken(_tokenAddress);
 
-        emit EventCreated(
-            _name,
-            _maxCapacity,
-            _signupStartTime,
-            _signupEndTime,
-            _eventStartTime,
-            _eventEndTime
-        );
+        emit EventCreated(_name, _maxCapacity);
     }
 
-    function signUp(string memory metadata) external {
+    /**
+     * @dev Checks if a user has already signed up for the event.
+     * @return bool True if the user is signed up, otherwise false.
+     */
+    function isAttendee() external view returns (bool) {
+        return bytes(attendees[msg.sender].metadata).length > 0;
+    }
+
+    /**
+     * @dev Allows a user to sign up for the event.
+     * @param metadata Additional attendee details (e.g., name, email)
+     */
+    function signUp(string calldata metadata) external {
         require(eventDetails.isActive, "Event is not active");
         require(
             block.timestamp >= eventDetails.signupStartTime,
-            "Signup has not started yet"
+            "Signup not started"
         );
-        require(
-            block.timestamp < eventDetails.signupEndTime,
-            "Signup has ended"
-        );
+        require(block.timestamp < eventDetails.signupEndTime, "Signup ended");
         require(
             eventDetails.attendeeCount < eventDetails.maxCapacity,
-            "Event is full"
+            "Event full"
         );
         require(
             bytes(attendees[msg.sender].metadata).length == 0,
             "Already signed up"
         );
 
-        attendees[msg.sender] = AttendeeDetails({
-            metadata: metadata,
-            checkedIn: false
-        });
+        attendees[msg.sender] = AttendeeDetails(false, metadata);
+        attendeeList.push(msg.sender);
 
-        addresses.push(msg.sender);
+        unchecked {
+            eventDetails.attendeeCount++; // Gas-efficient increment
+        }
 
-        eventDetails.attendeeCount++;
-
-        emit SignedUp(msg.sender);
+        emit SignedUp(msg.sender, metadata);
     }
 
-    function checkIn() external {
+    /**
+     * @dev Allows an attendee to check in and receive rewards.
+     * @return metadata The metadata string of the attendee.
+     */
+    function checkIn() external returns (string memory metadata) {
         require(eventDetails.isActive, "Event is not active");
         require(
             block.timestamp >= eventDetails.eventStartTime,
-            "Event has not started yet"
+            "Event not started"
         );
-        require(block.timestamp < eventDetails.eventEndTime, "Event has ended");
+        require(block.timestamp < eventDetails.eventEndTime, "Event ended");
         require(
             bytes(attendees[msg.sender].metadata).length > 0,
-            "You are not signed up for the event"
+            "Not signed up"
         );
-        require(
-            !attendees[msg.sender].checkedIn,
-            "You have already checked in for the event"
-        );
+        require(!attendees[msg.sender].checkedIn, "Already checked in");
 
-        // Transfer tokens to the user
+        attendees[msg.sender].checkedIn = true;
+
+        // Transfer tokens to the attendee
         require(
-            token.transferFrom(owner, msg.sender, eventDetails.rewardCost),
+            token.transfer(msg.sender, eventDetails.rewardCost),
             "Token transfer failed"
         );
 
-        attendees[msg.sender].checkedIn = true;
-        emit CheckedIn(msg.sender);
+        return attendees[msg.sender].metadata;
     }
 
+    /**
+     * @dev Deactivates the event, preventing further signups or check-ins.
+     * Only callable by the owner.
+     */
     function deactivate() external onlyOwner {
         eventDetails.isActive = false;
+        // Get the token balance of this contract
+        uint256 balance = token.balanceOf(address(this));
+
+        // Ensure there are tokens to transfer
+        if (balance > 0) {
+            token.transfer(token.treasury(), balance);
+        }
         emit Deactivated(msg.sender);
     }
 
     /**
-     * @dev Allows the current owner to transfer ownership to a new address.
-     * Can only be called by the current owner.
-     */
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "New owner is the zero address");
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
-    }
-
-    /**
-     * @dev Allows the owner to retrieve all attendee metadata.
-     * Can only be called by the owner.
-     * @return metadataList An array of all metadata strings.
+     * @dev Retrieves all attendee metadata. Can only be called by the event owner.
+     * @return metadataList Array of all attendee metadata
      */
     function getAllMetadata()
         external
         view
         onlyOwner
-        returns (string[] memory metadataList)
+        returns (string[] memory)
     {
-        uint256 attendeeCount = eventDetails.attendeeCount;
-        metadataList = new string[](attendeeCount);
+        uint256 count = eventDetails.attendeeCount;
+        string[] memory metadataList = new string[](count);
 
-        for (uint256 i = 0; i < attendeeCount; i++) {
-            metadataList[i] = attendees[addresses[i]].metadata;
+        for (uint256 i; i < count; ) {
+            metadataList[i] = attendees[attendeeList[i]].metadata;
+            unchecked {
+                i++;
+            } // Gas-efficient loop
         }
+
+        return metadataList;
+    }
+
+    /**
+     * @dev Retrieves metadata for a specific attendee.
+     * @return metadata The metadata of the given attendee
+     */
+    function getMetadata() external view returns (string memory metadata) {
+        require(
+            bytes(attendees[msg.sender].metadata).length > 0,
+            "Attendee not found"
+        );
+        return attendees[msg.sender].metadata;
     }
 }
