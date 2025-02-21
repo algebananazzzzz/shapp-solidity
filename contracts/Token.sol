@@ -13,6 +13,7 @@ contract Token is ERC20, AccessControl, Pausable {
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     address public immutable treasury;
+    mapping(address => uint256) private receivedVolumes;
 
     // Constructor to set the token name, symbol, initial supply, and grant roles
     constructor(
@@ -65,5 +66,27 @@ contract Token is ERC20, AccessControl, Pausable {
         uint256 amount
     ) internal override whenNotPaused {
         super._beforeTokenTransfer(from, to, amount);
+    }
+
+    function _afterTokenTransfer(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override {
+        if (from != address(0) && to != address(0)) {
+            receivedVolumes[to] += amount;
+        }
+        super._afterTokenTransfer(from, to, amount);
+    }
+
+    // Function to get received transaction volume for a specific address
+    function getMyReceivedVolume() public view returns (uint256) {
+        return receivedVolumes[msg.sender];
+    }
+
+    function getReceivedVolumeFor(
+        address account
+    ) public view onlyRole(MINTER_ROLE) returns (uint256) {
+        return receivedVolumes[account];
     }
 }

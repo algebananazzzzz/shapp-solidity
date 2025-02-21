@@ -1,3 +1,5 @@
 {
-  "WelfareSignupModule#WelfareSignup": "0x46078aD1DA7fc3711801Fe3D1504C1C6a738bB7F"
+  "TokenModule#Token": "0x97F2bf7C047AE84810ce51b52128F6Bad5F4dfBd",
+  "TokenModule#EventFactory": "0x85E9c2959238A4db37e7C92531a9F254b7bf3914",
+  "TokenModule#WelfareFactory": "0xa9BE787dD4fC9dB90A9aBE099cD7CeA4B9403D6f"
 }

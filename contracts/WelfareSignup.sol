@@ -111,6 +111,10 @@ contract WelfareSignup is Ownable {
         );
         require(!attendees[msg.sender], "Already signed up");
         require(
+            token.balanceOf(msg.sender) >= welfareDetails.redemptionCost,
+            "Insufficient balance: Not enough tokens to complete redemption"
+        );
+        require(
             token.allowance(msg.sender, address(this)) >=
                 welfareDetails.redemptionCost,
             "Insufficient allowance: Approval for redemption cost not granted"
